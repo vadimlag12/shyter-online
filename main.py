@@ -208,10 +208,16 @@ html_content = """
 
     <script>
         let scene, camera, renderer, sunLight, hemiLight;
-        let players = {}, myId = null, myName = "Operator", ws;
-        let keys = { w:0, a:0, s:0, d:0 };
-        let moveSpeed = 0.15, yaw = 0, pitch = 0;
+        let players = {}, myId = null, myName = "Player", ws;
+        let keys = { KeyW:0, KeyA:0, KeyS:0, KeyD:0, Space:0 };
+        let moveSpeed = 0.18, yaw = 0, pitch = 0;
         let myHp = 100, myScore = 0, isMobile = false;
+
+        // Физика
+        let velocityY = 0;
+        const gravity = -0.012;
+        const jumpForce = 0.25;
+        let canJump = true;
 
         let weapon, isShooting = false;
         let mapGroup = new THREE.Group(), collidableObjects = [], raycastTargets = [];
@@ -284,8 +290,12 @@ html_content = """
                     }
                 });
                 
-                window.addEventListener('keydown', (e) => { if(e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = 1; });
-                window.addEventListener('keyup', (e) => { if(e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = 0; });
+                window.addEventListener('keydown', (e) => { 
+                    if(e.code in keys) keys[e.code] = 1; 
+                });
+                window.addEventListener('keyup', (e) => { 
+                    if(e.code in keys) keys[e.code] = 0; 
+                });
             } else {
                 initMobileControls();
             }
@@ -769,15 +779,38 @@ html_content = """
         }
 
         function checkCollisions(pos) {
+            const playerRadius = 0.4;
+            const playerHeight = 1.8;
+            
             for(let i=0; i<collidableObjects.length; i++) {
                 let box = new THREE.Box3().setFromObject(collidableObjects[i]);
-                let pBox = new THREE.Box3(
-                    new THREE.Vector3(pos.x - 0.35, 0, pos.z - 0.35),
-                    new THREE.Vector3(pos.x + 0.35, 2, pos.z + 0.35)
+                
+                // Простая проверка пересечения сферы игрока с AABB объекта
+                let closestPoint = new THREE.Vector3(
+                    Math.max(box.min.x, Math.min(pos.x, box.max.x)),
+                    Math.max(box.min.y, Math.min(pos.y - 1, box.max.y)), // Центр игрока по высоте
+                    Math.max(box.min.z, Math.min(pos.z, box.max.z))
                 );
-                if(box.intersectsBox(pBox)) return true;
+                
+                let distance = pos.clone().setComponent(1, pos.y - 1).distanceTo(closestPoint);
+                if(distance < playerRadius) return true;
             }
             return false;
+        }
+
+        function getFloorY(pos) {
+            let floorY = 0;
+            const ray = new THREE.Raycaster(new THREE.Vector3(pos.x, 20, pos.z), new THREE.Vector3(0, -1, 0));
+            const hits = ray.intersectObjects(collidableObjects, false);
+            if(hits.length > 0) {
+                // Ищем самую высокую точку под игроком, но ниже его текущей позиции головы
+                for(let hit of hits) {
+                    if(hit.point.y <= pos.y - 1.6 + 0.5) { // 0.5 - высота ступеньки
+                        floorY = Math.max(floorY, hit.point.y);
+                    }
+                }
+            }
+            return floorY;
         }
 
         function pushToKillfeed(killer, victim) {
@@ -832,10 +865,15 @@ html_content = """
             let nextPos = camera.position.clone(), isMoving = false;
 
             if(!isMobile) {
-                if (keys.w) { nextPos.addScaledVector(forward, moveSpeed); isMoving = true; }
-                if (keys.s) { nextPos.addScaledVector(forward, -moveSpeed); isMoving = true; }
-                if (keys.a) { nextPos.addScaledVector(side, -moveSpeed); isMoving = true; }
-                if (keys.d) { nextPos.addScaledVector(side, moveSpeed); isMoving = true; }
+                if (keys.KeyW) { nextPos.addScaledVector(forward, moveSpeed); isMoving = true; }
+                if (keys.KeyS) { nextPos.addScaledVector(forward, -moveSpeed); isMoving = true; }
+                if (keys.KeyA) { nextPos.addScaledVector(side, -moveSpeed); isMoving = true; }
+                if (keys.KeyD) { nextPos.addScaledVector(side, moveSpeed); isMoving = true; }
+                
+                if (keys.Space && canJump) {
+                    velocityY = jumpForce;
+                    canJump = false;
+                }
             } else {
                 if(idMove !== null) {
                     nextPos.addScaledVector(forward, -dataMove.curY * moveSpeed);
@@ -844,8 +882,36 @@ html_content = """
                 }
             }
 
-            if(isMoving && !checkCollisions(nextPos)) {
-                camera.position.copy(nextPos);
+            // Гравитация и прыжки
+            velocityY += gravity;
+            nextPos.y += velocityY;
+
+            // Проверка пола и забирание на объекты
+            let floorY = getFloorY(nextPos);
+            let targetY = floorY + 1.7; // 1.7 - высота глаз
+
+            if (nextPos.y < targetY) {
+                nextPos.y = targetY;
+                velocityY = 0;
+                canJump = true;
+            }
+
+            // Коллизии по горизонтали (X и Z раздельно для скольжения вдоль стен)
+            let horizontalPos = camera.position.clone();
+            horizontalPos.x = nextPos.x;
+            if (checkCollisions(horizontalPos)) {
+                nextPos.x = camera.position.x;
+            }
+
+            horizontalPos = camera.position.clone();
+            horizontalPos.z = nextPos.z;
+            if (checkCollisions(horizontalPos)) {
+                nextPos.z = camera.position.z;
+            }
+
+            camera.position.copy(nextPos);
+            
+            if (isMoving) {
                 weapon.position.y = -0.16 + Math.sin(Date.now() * 0.01) * 0.005;
             }
 
