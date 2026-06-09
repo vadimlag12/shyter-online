@@ -14,9 +14,9 @@ class GameServer:
         self.players = {}
         self.current_round = 1
         self.maps = [
-            {"sky": "#b3e5fc", "ground": "#e0e0e0", "wall": "#78909c", "name": "ДНЕВНОЙ ПОЛИГОН"},
-            {"sky": "#ffe0b2", "ground": "#d7ccc8", "wall": "#a1887f", "name": "ПЕСЧАНЫЙ КАНЬОН"},
-            {"sky": "#c8e6c9", "ground": "#cfd8dc", "wall": "#546e7a", "name": "ИНДУСТРИАЛЬНЫЙ СЕКТОР"}
+            {"sky": "#b3e5fc", "ground": "#e0e0e0", "wall": "#78909c", "name": "ДНЕВНОЙ ПОЛИГОН", "seed": 123},
+            {"sky": "#ffe0b2", "ground": "#d7ccc8", "wall": "#a1887f", "name": "ПЕСЧАНЫЙ КАНЬОН", "seed": 456},
+            {"sky": "#c8e6c9", "ground": "#cfd8dc", "wall": "#546e7a", "name": "ИНДУСТРИАЛЬНЫЙ СЕКТОР", "seed": 789}
         ]
         self.current_map = self.maps[0]
 
@@ -25,7 +25,7 @@ class GameServer:
         self.active_connections[player_id] = websocket
         x, z = random.uniform(-20, 20), random.uniform(-20, 20)
         self.players[player_id] = {
-            "name": "Operator", "x": x, "z": z, "ry": 0,
+            "name": "Operator", "x": x, "y": 0, "z": z, "ry": 0,
             "hp": 100, "score": 0
         }
 
@@ -46,11 +46,14 @@ async def round_manager():
         await asyncio.sleep(120)
         server.current_round += 1
         server.current_map = server.maps[(server.current_round - 1) % len(server.maps)]
+        # Обновляем сид для случайной, но одинаковой генерации
+        server.current_map["seed"] = random.randint(1, 999999)
         
         # Сброс HP и позиций для всех игроков при новом раунде
         for pid in server.players:
             server.players[pid]["hp"] = 100
             server.players[pid]["x"] = random.uniform(-20, 20)
+            server.players[pid]["y"] = 0
             server.players[pid]["z"] = random.uniform(-20, 20)
             
         await server.broadcast({
@@ -81,9 +84,13 @@ async def websocket_endpoint(websocket: WebSocket, player_id: str):
                 await server.broadcast({"type": "new_player", "id": player_id, "info": server.players[player_id]})
             elif msg["type"] == "move":
                 server.players[player_id]["x"] = msg["x"]
+                server.players[player_id]["y"] = msg["y"]
                 server.players[player_id]["z"] = msg["z"]
                 server.players[player_id]["ry"] = msg["ry"]
-                await server.broadcast({"type": "update", "id": player_id, "x": msg["x"], "z": msg["z"], "ry": msg["ry"]})
+                await server.broadcast({
+                    "type": "update", "id": player_id, 
+                    "x": msg["x"], "y": msg["y"], "z": msg["z"], "ry": msg["ry"]
+                })
             elif msg["type"] == "shoot":
                 # Транслируем выстрел другим игрокам для отображения эффектов
                 await server.broadcast({"type": "enemy_shoot", "id": player_id})
@@ -237,6 +244,12 @@ html_content = """
         let dataLook = { startX: 0, startY: 0 };
         let lastPos = new THREE.Vector3(), lastYaw = 0;
 
+        // Seeded Random для синхронизации карты
+        function seededRandom(seed) {
+            const x = Math.sin(seed++) * 10000;
+            return x - Math.floor(x);
+        }
+
         function checkMobile() {
             isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (window.innerWidth < 900);
             if(isMobile) {
@@ -358,6 +371,7 @@ html_content = """
             mapGroup.add(grid);
 
             const colors = [0xff4757, 0x2ed573, 0x1e90ff, 0xffa502, 0x747d8c];
+            let currentSeed = mapData.seed || 123;
             
             // Арка в центре
             const archGroup = new THREE.Group();
@@ -378,8 +392,8 @@ html_content = """
 
             // Разбросанные геометрические фигуры
             for(let i=0; i<40; i++) {
-                const size = 2 + Math.random() * 5;
-                const type = Math.floor(Math.random() * 3);
+                const size = 2 + seededRandom(currentSeed++) * 5;
+                const type = Math.floor(seededRandom(currentSeed++) * 3);
                 let geo;
                 if(type === 0) geo = new THREE.BoxGeometry(size, size, size);
                 else if(type === 1) geo = new THREE.TetrahedronGeometry(size);
@@ -391,13 +405,13 @@ html_content = """
                 }));
                 
                 mesh.position.set(
-                    (Math.random()-0.5) * 100,
+                    (seededRandom(currentSeed++)-0.5) * 100,
                     size/2,
-                    (Math.random()-0.5) * 100
+                    (seededRandom(currentSeed++)-0.5) * 100
                 );
                 if(mesh.position.length() < 15) mesh.position.multiplyScalar(3);
 
-                mesh.rotation.set(Math.random(), Math.random(), Math.random());
+                mesh.rotation.set(seededRandom(currentSeed++), seededRandom(currentSeed++), seededRandom(currentSeed++));
                 mesh.castShadow = true;
                 mesh.receiveShadow = true;
                 mapGroup.add(mesh);
@@ -606,12 +620,12 @@ html_content = """
             hitbox.userData.playerId = id;
 
             group.add(body, legL, legR, headGroup, hitbox);
-            group.position.set(info.x, 0, info.z);
+            group.position.set(info.x, info.y || 0, info.z);
             scene.add(group);
 
             players[id] = { 
                 group: group, head: headGroup, weapon: enemyWeapon, hitbox: hitbox, name: info.name, hp: info.hp,
-                targetX: info.x, targetZ: info.z, targetRy: info.ry 
+                targetX: info.x, targetY: info.y || 0, targetZ: info.z, targetRy: info.ry 
             };
             raycastTargets.push(hitbox);
             updatePlayerLabel(id);
@@ -706,7 +720,13 @@ html_content = """
         function sendNetworkPosition() {
             if (ws && ws.readyState === WebSocket.OPEN && myId) {
                 if (camera.position.distanceTo(lastPos) > 0.01 || Math.abs(yaw - lastYaw) > 0.005) {
-                    ws.send(JSON.stringify({ type: "move", x: camera.position.x, z: camera.position.z, ry: yaw }));
+                    ws.send(JSON.stringify({ 
+                        type: "move", 
+                        x: camera.position.x, 
+                        y: camera.position.y - 1.7, // Передаем позицию ног
+                        z: camera.position.z, 
+                        ry: yaw 
+                    }));
                     lastPos.copy(camera.position); lastYaw = yaw;
                 }
             }
@@ -743,13 +763,14 @@ html_content = """
                     if (data.players) {
                         for (let id in data.players) {
                             if (id === myId) {
-                                camera.position.set(data.players[id].x, 1.65, data.players[id].z);
+                                camera.position.set(data.players[id].x, 1.7, data.players[id].z);
                             } else {
                                 if (!players[id]) {
                                     spawnEnemyCharacter(id, data.players[id]);
                                 } else {
-                                    players[id].group.position.set(data.players[id].x, 0, data.players[id].z);
+                                    players[id].group.position.set(data.players[id].x, data.players[id].y || 0, data.players[id].z);
                                     players[id].targetX = data.players[id].x;
+                                    players[id].targetY = data.players[id].y || 0;
                                     players[id].targetZ = data.players[id].z;
                                     players[id].hp = 100;
                                     updatePlayerLabel(id);
@@ -759,7 +780,10 @@ html_content = """
                     }
                 }
                 else if (data.type === "update" && data.id !== myId && players[data.id]) {
-                    players[data.id].targetX = data.x; players[data.id].targetZ = data.z; players[data.id].targetRy = data.ry;
+                    players[data.id].targetX = data.x; 
+                    players[data.id].targetY = data.y;
+                    players[data.id].targetZ = data.z; 
+                    players[data.id].targetRy = data.ry;
                 }
                 else if (data.type === "hp_update") {
                     if(data.id === myId) { 
@@ -888,6 +912,7 @@ html_content = """
                 let p = players[id];
                 if(id !== myId) {
                     p.group.position.x += (p.targetX - p.group.position.x) * 0.25;
+                    p.group.position.y += (p.targetY - p.group.position.y) * 0.25;
                     p.group.position.z += (p.targetZ - p.group.position.z) * 0.25;
                     p.group.rotation.y += (p.targetRy - p.group.rotation.y) * 0.25;
                     if(p.label) p.label.lookAt(camera.position);
@@ -899,22 +924,28 @@ html_content = """
             
             let nextPos = camera.position.clone(), isMoving = false;
 
+            // ОБРАБОТКА МОБИЛЬНОГО ДВИЖЕНИЯ (FIXED)
+            let moveX = 0, moveZ = 0;
             if(!isMobile) {
-                if (keys.KeyW) { nextPos.addScaledVector(forward, moveSpeed); isMoving = true; }
-                if (keys.KeyS) { nextPos.addScaledVector(forward, -moveSpeed); isMoving = true; }
-                if (keys.KeyA) { nextPos.addScaledVector(side, -moveSpeed); isMoving = true; }
-                if (keys.KeyD) { nextPos.addScaledVector(side, moveSpeed); isMoving = true; }
+                if (keys.KeyW) moveZ += 1;
+                if (keys.KeyS) moveZ -= 1;
+                if (keys.KeyA) moveX -= 1;
+                if (keys.KeyD) moveX += 1;
                 
                 if (keys.Space && canJump) {
                     velocityY = jumpForce;
                     canJump = false;
                 }
             } else {
-                if(idMove !== null) {
-                    nextPos.addScaledVector(forward, -dataMove.curY * moveSpeed);
-                    nextPos.addScaledVector(side, dataMove.curX * moveSpeed);
-                    isMoving = true;
-                }
+                // В мобильной версии берем данные из джойстика
+                moveZ = -dataMove.curY;
+                moveX = dataMove.curX;
+            }
+
+            if (moveX !== 0 || moveZ !== 0) {
+                nextPos.addScaledVector(forward, moveZ * moveSpeed);
+                nextPos.addScaledVector(side, moveX * moveSpeed);
+                isMoving = true;
             }
 
             // Гравитация и прыжки
