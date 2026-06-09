@@ -148,16 +148,20 @@ html_content = """
         .kill-msg { background: rgba(0,0,0,0.5); padding: 8px 15px; border-radius: 8px; color: #fff; font-size: 14px; font-weight: 700; border-left: 4px solid #ff4757; animation: slideUp 0.3s ease-out; }
         @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         
-        /* TOUCH CONTROLS - REWRITTEN */
+        /* TOUCH CONTROLS - REWRITTEN V3 */
         #touch_controls { position: absolute; inset: 0; z-index: 20; display: none; pointer-events: none; }
-        .touch-zone { position: absolute; bottom: 0; height: 60%; width: 50%; pointer-events: auto; }
+        .touch-zone { position: absolute; bottom: 0; height: 100%; width: 50%; pointer-events: auto; }
         #zone_move { left: 0; }
         #zone_look { right: 0; }
         
-        .joystick-base { position: absolute; width: 120px; height: 120px; background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.2); border-radius: 50%; display: none; pointer-events: none; transform: translate(-50%, -50%); backdrop-filter: blur(2px); }
+        .joystick-base { position: absolute; width: 120px; height: 120px; background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.2); border-radius: 50%; display: none; pointer-events: none; transform: translate(-50%, -50%); backdrop-filter: blur(5px); }
         .joystick-stick { position: absolute; width: 50px; height: 50px; background: #fff; border-radius: 50%; top: 35px; left: 35px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
         
-        #btn_fire { position: absolute; bottom: 60px; right: 60px; width: 100px; height: 100px; background: rgba(255,71,87,0.3); border: 4px solid #ff4757; border-radius: 50%; display: none; justify-content: center; align-items: center; font-weight: 900; font-size: 20px; color: #fff; z-index: 30; pointer-events: auto; text-shadow: 0 2px 5px rgba(0,0,0,0.3); }
+        #mobile_buttons { position: absolute; bottom: 40px; right: 40px; display: flex; flex-direction: column; gap: 20px; pointer-events: none; }
+        .m-btn { width: 85px; height: 85px; background: rgba(255,255,255,0.1); border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-weight: 900; font-size: 18px; color: #fff; pointer-events: auto; backdrop-filter: blur(5px); transition: transform 0.1s, background 0.1s; user-select: none; -webkit-tap-highlight-color: transparent; }
+        .m-btn:active { transform: scale(0.9); background: rgba(255,71,87,0.5); border-color: #ff4757; }
+        #btn_fire { background: rgba(255,71,87,0.3); border-color: #ff4757; width: 100px; height: 100px; }
+        #btn_jump { font-size: 24px; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -186,7 +190,8 @@ html_content = """
         <div id="round_info">ROUND 1</div>
     </div>
 
-    <div id="killfeed"></div>
+    <div id="killfeed">
+    </div>
     
     <div id="crosshair_container">
         <div class="crosshair-line ch-v ch-t"></div>
@@ -202,8 +207,11 @@ html_content = """
         <div id="zone_move" class="touch-zone"></div>
         <div id="zone_look" class="touch-zone"></div>
         <div id="joy_move" class="joystick-base"><div class="joystick-stick"></div></div>
-        <div id="joy_look" class="joystick-base" style="width: 80px; height: 80px; opacity: 0.5;"><div class="joystick-stick" style="width: 30px; height: 30px; top: 25px; left: 25px;"></div></div>
-        <div id="btn_fire">FIRE</div>
+        
+        <div id="mobile_buttons">
+            <div id="btn_jump" class="m-btn">JUMP</div>
+            <div id="btn_fire" class="m-btn">FIRE</div>
+        </div>
     </div>
 
     <script>
@@ -602,78 +610,88 @@ html_content = """
             updatePlayerLabel(id);
         }
 
-        // --- МОБИЛЬНЫЙ МУЛЬТИТАЧ (REWRITTEN) ---
+        // --- МОБИЛЬНЫЙ МУЛЬТИТАЧ (REWRITTEN V3) ---
         function initMobileControls() {
             const zMove = document.getElementById("zone_move");
             const zLook = document.getElementById("zone_look");
             const jMove = document.getElementById("joy_move");
-            const jLook = document.getElementById("joy_look");
             const sMove = jMove.querySelector(".joystick-stick");
-            const sLook = jLook.querySelector(".joystick-stick");
 
-            const touches = {};
+            const activeTouches = {};
 
             const handleTouch = (e) => {
-                e.preventDefault();
+                // Не предотвращаем default для всех событий, чтобы кнопки работали
                 const rectMove = zMove.getBoundingClientRect();
-                const rectLook = zLook.getBoundingClientRect();
 
                 for(let t of e.changedTouches) {
                     if(e.type === "touchstart") {
+                        // Если касание в зоне кнопок, не обрабатываем его как движение/обзор
+                        if (t.target.closest('.m-btn')) continue;
+                        
+                        e.preventDefault();
                         if(t.clientX < rectMove.right) {
-                            touches.move = { id: t.identifier, startX: t.clientX, startY: t.clientY };
+                            activeTouches[t.identifier] = { type: 'move', startX: t.clientX, startY: t.clientY };
                             jMove.style.display = "block";
                             jMove.style.left = t.clientX + "px";
                             jMove.style.top = t.clientY + "px";
-                        } else if(t.clientX > rectLook.left) {
-                            touches.look = { id: t.identifier, lastX: t.clientX, lastY: t.clientY };
-                            jLook.style.display = "block";
-                            jLook.style.left = t.clientX + "px";
-                            jLook.style.top = t.clientY + "px";
+                        } else {
+                            activeTouches[t.identifier] = { type: 'look', lastX: t.clientX, lastY: t.clientY };
                         }
                     } else if(e.type === "touchmove") {
-                        if(touches.move && t.identifier === touches.move.id) {
-                            let dx = t.clientX - touches.move.startX;
-                            let dy = t.clientY - touches.move.startY;
-                            let dist = Math.min(40, Math.sqrt(dx*dx + dy*dy));
+                        const touchData = activeTouches[t.identifier];
+                        if(!touchData) continue;
+                        e.preventDefault();
+
+                        if(touchData.type === 'move') {
+                            let dx = t.clientX - touchData.startX;
+                            let dy = t.clientY - touchData.startY;
+                            let dist = Math.min(50, Math.sqrt(dx*dx + dy*dy));
                             let angle = Math.atan2(dy, dx);
-                            dataMove.curX = Math.cos(angle) * (dist / 40);
-                            dataMove.curY = Math.sin(angle) * (dist / 40);
+                            dataMove.curX = Math.cos(angle) * (dist / 50);
+                            dataMove.curY = Math.sin(angle) * (dist / 50);
                             sMove.style.transform = `translate(${Math.cos(angle)*dist}px, ${Math.sin(angle)*dist}px)`;
-                        } else if(touches.look && t.identifier === touches.look.id) {
-                            let dx = t.clientX - touches.look.lastX;
-                            let dy = t.clientY - touches.look.lastY;
-                            yaw -= dx * 0.006;
-                            pitch -= dy * 0.006;
+                        } else if(touchData.type === 'look') {
+                            let dx = t.clientX - touchData.lastX;
+                            let dy = t.clientY - touchData.lastY;
+                            yaw -= dx * 0.007;
+                            pitch -= dy * 0.007;
                             pitch = Math.max(-Math.PI/2.3, Math.min(Math.PI/2.3, pitch));
                             camera.rotation.set(pitch, yaw, 0, 'YXZ');
-                            sLook.style.transform = `translate(${Math.max(-20, Math.min(20, dx))}px, ${Math.max(-20, Math.min(20, dy))}px)`;
-                            touches.look.lastX = t.clientX;
-                            touches.look.lastY = t.clientY;
+                            touchData.lastX = t.clientX;
+                            touchData.lastY = t.clientY;
                         }
                     } else if(e.type === "touchend" || e.type === "touchcancel") {
-                        if(touches.move && t.identifier === touches.move.id) {
-                            touches.move = null;
+                        const touchData = activeTouches[t.identifier];
+                        if(!touchData) continue;
+                        
+                        if(touchData.type === 'move') {
                             dataMove.curX = 0; dataMove.curY = 0;
                             jMove.style.display = "none";
                             sMove.style.transform = "translate(0,0)";
-                        } else if(touches.look && t.identifier === touches.look.id) {
-                            touches.look = null;
-                            jLook.style.display = "none";
-                            sLook.style.transform = "translate(0,0)";
                         }
+                        delete activeTouches[t.identifier];
                     }
                 }
             };
 
+            // Добавляем слушатели на конкретные зоны
             document.addEventListener("touchstart", handleTouch, {passive: false});
             document.addEventListener("touchmove", handleTouch, {passive: false});
             document.addEventListener("touchend", handleTouch, {passive: false});
             document.addEventListener("touchcancel", handleTouch, {passive: false});
 
+            // Кнопки управления
             document.getElementById("btn_fire").addEventListener("touchstart", (e) => { 
                 e.preventDefault(); 
                 performShoot(); 
+            });
+            
+            document.getElementById("btn_jump").addEventListener("touchstart", (e) => { 
+                e.preventDefault(); 
+                if (canJump) {
+                    velocityY = jumpForce;
+                    canJump = false;
+                }
             });
         }
 
