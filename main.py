@@ -46,10 +46,18 @@ async def round_manager():
         await asyncio.sleep(120)
         server.current_round += 1
         server.current_map = server.maps[(server.current_round - 1) % len(server.maps)]
+        
+        # Сброс HP и позиций для всех игроков при новом раунде
         for pid in server.players:
             server.players[pid]["hp"] = 100
+            server.players[pid]["x"] = random.uniform(-20, 20)
+            server.players[pid]["z"] = random.uniform(-20, 20)
+            
         await server.broadcast({
-            "type": "new_round", "round": server.current_round, "map": server.current_map
+            "type": "new_round", 
+            "round": server.current_round, 
+            "map": server.current_map,
+            "players": server.players # Передаем обновленное состояние игроков
         })
 
 @app.on_event("startup")
@@ -362,6 +370,38 @@ html_content = """
             const hm = document.getElementById("hitmarker");
             hm.style.opacity = "1";
             setTimeout(() => hm.style.opacity = "0", 70);
+            
+            // Звуковой эффект (имитация) или легкая вибрация пушки
+            weapon.position.z -= 0.02;
+            setTimeout(() => weapon.position.z += 0.02, 50);
+        }
+
+        // --- УЛУЧШЕННЫЕ ВИЗУАЛЬНЫЕ ЭФФЕКТЫ ---
+        function createExplosion(pos) {
+            const count = 12;
+            for(let i=0; i<count; i++) {
+                const part = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.1, 0.1, 0.1),
+                    new THREE.MeshBasicMaterial({ color: 0xff1744 })
+                );
+                part.position.copy(pos);
+                scene.add(part);
+                
+                const vel = new THREE.Vector3(
+                    (Math.random()-0.5)*0.2,
+                    Math.random()*0.2,
+                    (Math.random()-0.5)*0.2
+                );
+                
+                const anim = () => {
+                    part.position.add(vel);
+                    vel.y -= 0.01;
+                    part.scale.multiplyScalar(0.95);
+                    if(part.scale.x > 0.01) requestAnimationFrame(anim);
+                    else scene.remove(part);
+                };
+                anim();
+            }
         }
 
         // --- СВЕТЛЫЕ ТЕКСТОВЫЕ ТАБЛИЧКИ ИГРОКОВ ---
@@ -398,23 +438,45 @@ html_content = """
         function spawnEnemyCharacter(id, info) {
             const group = new THREE.Group();
             
-            // Яркая, контрастная форма оранжевого цвета (чтобы выделялась на фоне полигона)
+            // Яркая, контрастная форма оранжевого цвета
             const body = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 1.6, 12), new THREE.MeshStandardMaterial({ color:  0xffab40, roughness: 0.5 }));
             body.position.y = 0.8;
             
-            const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 10), new THREE.MeshStandardMaterial({ color: 0x263238 }));
-            head.position.y = 1.6;
+            // Голова
+            const headGroup = new THREE.Group();
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 12), new THREE.MeshStandardMaterial({ color: 0x263238 }));
+            
+            // ЛИЦО (Глаза)
+            const eyeGeo = new THREE.BoxGeometry(0.05, 0.05, 0.05);
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeL.position.set(-0.08, 0.05, -0.15);
+            const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeR.position.set(0.08, 0.05, -0.15);
+            
+            // Зрачки
+            const pupilGeo = new THREE.BoxGeometry(0.02, 0.02, 0.02);
+            const pupilMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            const pupilL = new THREE.Mesh(pupilGeo, pupilMat);
+            pupilL.position.set(0, 0, -0.02);
+            eyeL.add(pupilL);
+            const pupilR = new THREE.Mesh(pupilGeo, pupilMat);
+            pupilR.position.set(0, 0, -0.02);
+            eyeR.add(pupilR);
+
+            headGroup.add(head, eyeL, eyeR);
+            headGroup.position.y = 1.6;
             
             const hitbox = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.7, 0.6), new THREE.MeshBasicMaterial({ visible: false }));
             hitbox.position.y = 0.85;
             hitbox.userData.playerId = id;
 
-            group.add(body, head, hitbox);
+            group.add(body, headGroup, hitbox);
             group.position.set(info.x, 0, info.z);
             scene.add(group);
 
             players[id] = { 
-                group: group, hitbox: hitbox, name: info.name, hp: info.hp,
+                group: group, head: headGroup, hitbox: hitbox, name: info.name, hp: info.hp,
                 targetX: info.x, targetZ: info.z, targetRy: info.ry 
             };
             raycastTargets.push(hitbox);
@@ -506,15 +568,45 @@ html_content = """
                     document.getElementById("map_name").innerText = data.map.name;
                     generateMapStructure(data.map);
                     setHpAmount(100);
-                    for(let id in players) { players[id].hp = 100; updatePlayerLabel(id); }
+                    
+                    // Синхронизация игроков при новом раунде
+                    if (data.players) {
+                        for (let id in data.players) {
+                            if (id === myId) {
+                                camera.position.set(data.players[id].x, 1.65, data.players[id].z);
+                            } else {
+                                if (!players[id]) {
+                                    spawnEnemyCharacter(id, data.players[id]);
+                                } else {
+                                    players[id].group.position.set(data.players[id].x, 0, data.players[id].z);
+                                    players[id].targetX = data.players[id].x;
+                                    players[id].targetZ = data.players[id].z;
+                                    players[id].hp = 100;
+                                    updatePlayerLabel(id);
+                                }
+                            }
+                        }
+                    }
                 }
                 else if (data.type === "update" && data.id !== myId && players[data.id]) {
                     players[data.id].targetX = data.x; players[data.id].targetZ = data.z; players[data.id].targetRy = data.ry;
                 }
                 else if (data.type === "hp_update") {
-                    if(data.id === myId) { setHpAmount(data.hp); triggerFlinch(); }
-                    else if(players[data.id]) { players[data.id].hp = data.hp; updatePlayerLabel(data.id); }
-                    if(data.by === myId) { triggerHitmarker(); } // Если попали мы — запуск хитмаркера
+                    if(data.id === myId) { 
+                        setHpAmount(data.hp); 
+                        triggerFlinch(); 
+                    }
+                    else if(players[data.id]) { 
+                        players[data.id].hp = data.hp; 
+                        updatePlayerLabel(data.id); 
+                        
+                        // Эффект попадания по врагу
+                        const p = players[data.id];
+                        const oldColor = p.group.children[0].material.color.getHex();
+                        p.group.children[0].material.color.set(0xffffff);
+                        setTimeout(() => p.group.children[0].material.color.set(oldColor), 50);
+                    }
+                    if(data.by === myId) { triggerHitmarker(); } 
                 }
                 else if (data.type === "respawn") {
                     if(data.id === myId) { camera.position.set(data.x, 1.65, data.z); setHpAmount(100); }
@@ -523,6 +615,7 @@ html_content = """
                         document.getElementById("score_info").innerText = "KILLS: " + myScore;
                     }
                     if(players[data.id]) {
+                        createExplosion(players[data.id].group.position.clone().add(new THREE.Vector3(0, 1, 0)));
                         players[data.id].group.position.set(data.x, 0, data.z);
                         players[data.id].targetX = data.x; players[data.id].targetZ = data.z;
                         players[data.id].hp = 100; updatePlayerLabel(data.id);
