@@ -1,8 +1,9 @@
 import asyncio
 import json
 import random
+import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 
 app = FastAPI()
 
@@ -203,6 +204,7 @@ html_content = """
         #btn_jump { font-size: 24px; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
 </head>
 <body>
     <div id="login_screen">
@@ -266,6 +268,8 @@ html_content = """
         let moveSpeed = 0.22, yaw = 0, pitch = 0;
         let myHp = 100, myScore = 0, isMobile = false;
 
+        let playerModelTemplate = null;
+
         let velocityY = 0;
         const gravity = -0.012;
         const jumpForce = 0.26;
@@ -323,6 +327,56 @@ html_content = """
             scene.add(mapGroup);
             buildWeapon();
             camera.position.y = 1.7;
+
+            // Загрузка модели персонажа
+            const loader = new THREE.OBJLoader();
+            loader.load('/models/player.obj', (obj) => {
+                obj.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+                // Масштабируем и центрируем модель под размер хитбокса (примерно 1.8м высота)
+                const box = new THREE.Box3().setFromObject(obj);
+                const size = box.getSize(new THREE.Vector3());
+                const center = box.getCenter(new THREE.Vector3());
+                
+                const scale = 1.8 / size.y;
+                obj.scale.set(scale, scale, scale);
+                
+                // Сдвигаем модель так, чтобы ноги были на 0 (по Y)
+                obj.position.y = (size.y / 2 - center.y) * scale;
+                
+                playerModelTemplate = obj;
+                console.log("Player model loaded");
+                // Обновляем уже существующих игроков
+                for(let id in players) {
+                    if(id !== myId) {
+                        const p = players[id];
+                        // Удаляем старые части (body, legs, head)
+                        const toRemove = [];
+                        p.group.traverse((child) => {
+                            if(child !== p.group && child !== p.weapon && child !== p.hitbox && child !== p.label) {
+                                toRemove.push(child);
+                            }
+                        });
+                        toRemove.forEach(c => p.group.remove(c));
+                        
+                        // Добавляем модель
+                        const teamColor = p.team === "RED" ? 0xff4757 : 0x1e90ff;
+                        const model = playerModelTemplate.clone();
+                        model.traverse((child) => {
+                            if (child.isMesh) {
+                                child.material = new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.5 });
+                                child.castShadow = true; child.receiveShadow = true;
+                            }
+                        });
+                        model.rotation.y = Math.PI;
+                        p.group.add(model);
+                    }
+                }
+            });
 
             if(!isMobile) {
                 document.body.addEventListener('click', () => {
@@ -502,28 +556,37 @@ html_content = """
             const group = new THREE.Group();
             const teamColor = info.team === "RED" ? 0xff4757 : 0x1e90ff;
             
-            // Тело
-            const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 0.5), new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.4 }));
-            body.position.y = 0.9; body.castShadow = true;
-            
-            // Ноги
-            const legGeo = new THREE.BoxGeometry(0.3, 0.8, 0.3); const legMat = new THREE.MeshStandardMaterial({ color: 0x2f3542, roughness: 0.4 });
-            const legL = new THREE.Mesh(legGeo, legMat); legL.position.set(-0.2, 0.4, 0);
-            const legR = new THREE.Mesh(legGeo, legMat); legR.position.set(0.2, 0.4, 0);
-            
-            // Голова с лицом (визором)
-            const headGroup = new THREE.Group();
-            const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: 0x2f3542, roughness: 0.3 }));
-            
-            // Визор (лицо)
-            const visor = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 0.1), new THREE.MeshBasicMaterial({ color: teamColor }));
-            visor.position.set(0, 0.1, -0.21);
-            
-            // "Нос/Направление" для лучшей ориентации
-            const nose = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.2), new THREE.MeshStandardMaterial({ color: 0x2f3542 }));
-            nose.position.set(0, 0, -0.3);
-            
-            headGroup.add(head, visor, nose); headGroup.position.y = 1.7;
+            let model;
+            if (playerModelTemplate) {
+                model = playerModelTemplate.clone();
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        child.material = new THREE.MeshStandardMaterial({ 
+                            color: teamColor, 
+                            roughness: 0.5,
+                            metalness: 0.2
+                        });
+                    }
+                });
+                // Поворачиваем модель лицом вперед (обычно OBJ смотрят по оси Z или -Z)
+                model.rotation.y = Math.PI; 
+                group.add(model);
+            } else {
+                // Фолбек на коробки, если модель еще не загрузилась
+                const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 0.5), new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.4 }));
+                body.position.y = 0.9; body.castShadow = true;
+                const legGeo = new THREE.BoxGeometry(0.3, 0.8, 0.3); const legMat = new THREE.MeshStandardMaterial({ color: 0x2f3542, roughness: 0.4 });
+                const legL = new THREE.Mesh(legGeo, legMat); legL.position.set(-0.2, 0.4, 0);
+                const legR = new THREE.Mesh(legGeo, legMat); legR.position.set(0.2, 0.4, 0);
+                const headGroup = new THREE.Group();
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: 0x2f3542, roughness: 0.3 }));
+                const visor = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 0.1), new THREE.MeshBasicMaterial({ color: teamColor }));
+                visor.position.set(0, 0.1, -0.21);
+                const nose = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.2), new THREE.MeshStandardMaterial({ color: 0x2f3542 }));
+                nose.position.set(0, 0, -0.3);
+                headGroup.add(head, visor, nose); headGroup.position.y = 1.7;
+                group.add(body, legL, legR, headGroup);
+            }
             
             // Оружие
             const enemyWeapon = new THREE.Group();
@@ -535,9 +598,10 @@ html_content = """
             
             const hitbox = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.2, 1.2), new THREE.MeshBasicMaterial({ visible: false }));
             hitbox.position.y = 1; hitbox.userData.playerId = id;
-            group.add(body, legL, legR, headGroup, hitbox);
+            group.add(hitbox);
+            
             group.position.set(info.x, info.y || 0, info.z); scene.add(group);
-            players[id] = { group: group, head: headGroup, weapon: enemyWeapon, hitbox: hitbox, name: info.name, hp: info.hp, team: info.team, targetX: info.x, targetY: info.y || 0, targetZ: info.z, targetRy: info.ry };
+            players[id] = { group: group, weapon: enemyWeapon, hitbox: hitbox, name: info.name, hp: info.hp, team: info.team, targetX: info.x, targetY: info.y || 0, targetZ: info.z, targetRy: info.ry };
             raycastTargets.push(hitbox); updatePlayerLabel(id);
         }
 
@@ -634,7 +698,17 @@ html_content = """
                 }
                 else if (data.type === "hp_update") {
                     if(data.id === myId) { setHpAmount(data.hp); triggerFlinch(); }
-                    else if(players[data.id]) { players[data.id].hp = data.hp; updatePlayerLabel(data.id); const b = players[data.id].group.children[1]; if(b.material) { const oc = b.material.color.getHex(); b.material.color.set(0xffffff); setTimeout(() => b.material.color.set(oc), 50); } }
+                    else if(players[data.id]) { 
+                        players[data.id].hp = data.hp; 
+                        updatePlayerLabel(data.id); 
+                        players[data.id].group.traverse((child) => {
+                            if(child.isMesh && child.material && child !== players[data.id].hitbox) {
+                                const oc = child.material.color.getHex();
+                                child.material.color.set(0xffffff);
+                                setTimeout(() => child.material.color.set(oc), 50);
+                            }
+                        });
+                    }
                     if(data.by === myId) triggerHitmarker();
                 }
                 else if (data.type === "enemy_shoot") { if(data.id !== myId) performEnemyShoot(data.id); }
@@ -766,6 +840,10 @@ html_content = """
 </body>
 </html>
 """
+
+@app.get("/models/player.obj")
+async def get_model():
+    return FileResponse("my_persona_for_shyter.obj")
 
 @app.get("/", response_class=HTMLResponse)
 async def get():
