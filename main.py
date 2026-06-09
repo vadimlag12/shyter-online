@@ -228,7 +228,9 @@ html_content = """
         let canJump = true;
 
         let weapon, isShooting = false;
-        let mapGroup = new THREE.Group(), collidableObjects = [], raycastTargets = [];
+        let mapGroup = new THREE.Group();
+        let collidableObjects = [], raycastTargets = [];
+        let objectBounds = []; // Пре-вычисленные границы для скорости
 
         let idMove = null, idLook = null;
         let dataMove = { startX: 0, startY: 0, curX: 0, curY: 0 };
@@ -335,12 +337,13 @@ html_content = """
             while(mapGroup.children.length > 0){ mapGroup.remove(mapGroup.children[0]); }
             collidableObjects = [];
             raycastTargets = [];
+            objectBounds = [];
 
             renderer.setClearColor(mapData.sky);
             scene.background = new THREE.Color(mapData.sky);
             scene.fog = new THREE.Fog(mapData.sky, 10, 150);
             
-            // ПОЛ (Стилизованные плитки)
+            // ПОЛ
             const floorGeo = new THREE.PlaneGeometry(200, 200);
             const floorMat = new THREE.MeshStandardMaterial({ color: mapData.ground, roughness: 0.8 });
             const floor = new THREE.Mesh(floorGeo, floorMat);
@@ -348,14 +351,12 @@ html_content = """
             floor.receiveShadow = true;
             mapGroup.add(floor);
 
-            // Сетка на полу для стиля
             const grid = new THREE.GridHelper(200, 50, 0x000000, 0x000000);
             grid.position.y = 0.05;
             grid.material.opacity = 0.1;
             grid.material.transparent = true;
             mapGroup.add(grid);
 
-            // ГЕНЕРАЦИЯ СТИЛИЗОВАННОЙ КАРТЫ (как на картинке)
             const colors = [0xff4757, 0x2ed573, 0x1e90ff, 0xffa502, 0x747d8c];
             
             // Арка в центре
@@ -394,7 +395,6 @@ html_content = """
                     size/2,
                     (Math.random()-0.5) * 100
                 );
-                // Избегаем центра
                 if(mesh.position.length() < 15) mesh.position.multiplyScalar(3);
 
                 mesh.rotation.set(Math.random(), Math.random(), Math.random());
@@ -416,6 +416,13 @@ html_content = """
                 mesh.position.set(w.x, w.h/2, w.z);
                 mapGroup.add(mesh);
                 collidableObjects.push(mesh);
+            });
+
+            // КЭШИРОВАНИЕ ГРАНИЦ
+            collidableObjects.forEach(obj => {
+                obj.updateMatrixWorld();
+                const box = new THREE.Box3().setFromObject(obj);
+                objectBounds.push(box);
             });
         }
 
@@ -797,20 +804,23 @@ html_content = """
         }
 
         function checkCollisions(pos) {
-            const playerRadius = 0.4;
-            const playerHeight = 1.8;
-            
-            for(let i=0; i<collidableObjects.length; i++) {
-                let box = new THREE.Box3().setFromObject(collidableObjects[i]);
+            const playerRadius = 0.35; // Чуть меньше для лучшей проходимости
+            const feetY = pos.y - 1.7;
+            const stepHeight = 0.6; // Высота ступеньки
+
+            for(let i=0; i<objectBounds.length; i++) {
+                let box = objectBounds[i];
                 
-                // Простая проверка пересечения сферы игрока с AABB объекта
+                // Если объект ниже ног или мы уже на нем стоим (с учетом высоты ступеньки)
+                if (box.max.y <= feetY + stepHeight) continue;
+
                 let closestPoint = new THREE.Vector3(
                     Math.max(box.min.x, Math.min(pos.x, box.max.x)),
-                    Math.max(box.min.y, Math.min(pos.y - 1, box.max.y)), // Центр игрока по высоте
+                    Math.max(box.min.y, Math.min(pos.y - 0.85, box.max.y)), // Центр тела
                     Math.max(box.min.z, Math.min(pos.z, box.max.z))
                 );
                 
-                let distance = pos.clone().setComponent(1, pos.y - 1).distanceTo(closestPoint);
+                let distance = pos.clone().setComponent(1, pos.y - 0.85).distanceTo(closestPoint);
                 if(distance < playerRadius) return true;
             }
             return false;
@@ -818,13 +828,20 @@ html_content = """
 
         function getFloorY(pos) {
             let floorY = 0;
-            const ray = new THREE.Raycaster(new THREE.Vector3(pos.x, 20, pos.z), new THREE.Vector3(0, -1, 0));
-            const hits = ray.intersectObjects(collidableObjects, false);
-            if(hits.length > 0) {
-                // Ищем самую высокую точку под игроком, но ниже его текущей позиции головы
-                for(let hit of hits) {
-                    if(hit.point.y <= pos.y - 1.6 + 0.5) { // 0.5 - высота ступеньки
-                        floorY = Math.max(floorY, hit.point.y);
+            const feetY = pos.y - 1.7;
+            const checkRadius = 0.3;
+
+            // Используем кэшированные границы для быстрого поиска потенциальных платформ
+            for(let i=0; i<objectBounds.length; i++) {
+                let box = objectBounds[i];
+                
+                // Проверяем, находится ли игрок над этим объектом горизонтально
+                if (pos.x + checkRadius >= box.min.x && pos.x - checkRadius <= box.max.x &&
+                    pos.z + checkRadius >= box.min.z && pos.z - checkRadius <= box.max.z) {
+                    
+                    // Объект под ногами и не слишком высоко (ступенька)
+                    if (box.max.y <= feetY + 0.65) {
+                        floorY = Math.max(floorY, box.max.y);
                     }
                 }
             }
@@ -906,22 +923,30 @@ html_content = """
 
             // Проверка пола и забирание на объекты
             let floorY = getFloorY(nextPos);
-            let targetY = floorY + 1.7; // 1.7 - высота глаз
+            let targetY = floorY + 1.7;
 
+            // Плавный подъем (Step-up)
             if (nextPos.y < targetY) {
-                nextPos.y = targetY;
+                if (targetY - nextPos.y < 0.7) { // Если разница небольшая, поднимаем плавно
+                    nextPos.y += (targetY - nextPos.y) * 0.2;
+                } else {
+                    nextPos.y = targetY;
+                }
                 velocityY = 0;
                 canJump = true;
             }
 
             // Коллизии по горизонтали (X и Z раздельно для скольжения вдоль стен)
             let horizontalPos = camera.position.clone();
+            horizontalPos.y = nextPos.y; // Учитываем текущую высоту для коллизий
+            
             horizontalPos.x = nextPos.x;
             if (checkCollisions(horizontalPos)) {
                 nextPos.x = camera.position.x;
             }
 
             horizontalPos = camera.position.clone();
+            horizontalPos.y = nextPos.y;
             horizontalPos.z = nextPos.z;
             if (checkCollisions(horizontalPos)) {
                 nextPos.z = camera.position.z;
