@@ -687,9 +687,10 @@ html_content = """
                 
                 if (data.type === "init") {
                     myId = data.id;
-                    document.getElementById("score_info").innerText = "KILLS: " + myScore;
-                    document.getElementById("round_info").innerText = "ROUND: " + data.round;
-                    document.getElementById("map_name").innerText = data.map.name;
+                    // Исправлено: ID элементов HUD теперь соответствуют новым стилизованным блокам
+                    if(document.getElementById("score_val")) document.getElementById("score_val").innerText = myScore;
+                    if(document.getElementById("round_info")) document.getElementById("round_info").innerText = "ROUND " + data.round;
+                    if(document.getElementById("map_name")) document.getElementById("map_name").innerText = data.map.name;
                     generateMapStructure(data.map);
                     camera.position.set(data.x, 1.65, data.z);
                     for (let id in data.players) if(id !== myId) spawnEnemyCharacter(id, data.players[id]);
@@ -698,8 +699,8 @@ html_content = """
                     spawnEnemyCharacter(data.id, data.info);
                 }
                 else if (data.type === "new_round") {
-                    document.getElementById("round_info").innerText = "ROUND: " + data.round;
-                    document.getElementById("map_name").innerText = data.map.name;
+                    if(document.getElementById("round_info")) document.getElementById("round_info").innerText = "ROUND " + data.round;
+                    if(document.getElementById("map_name")) document.getElementById("map_name").innerText = data.map.name;
                     generateMapStructure(data.map);
                     setHpAmount(100);
                     
@@ -750,7 +751,7 @@ html_content = """
                     if(data.id === myId) { camera.position.set(data.x, 1.65, data.z); setHpAmount(100); }
                     if(data.score_update && data.score_update.id === myId) {
                         myScore = data.score_update.score;
-                        document.getElementById("score_info").innerText = "KILLS: " + myScore;
+                        if(document.getElementById("score_val")) document.getElementById("score_val").innerText = myScore;
                     }
                     if(players[data.id]) {
                         createExplosion(players[data.id].group.position.clone().add(new THREE.Vector3(0, 1, 0)));
