@@ -335,6 +335,22 @@ html_content = """
                     if (child.isMesh) {
                         child.castShadow = true;
                         child.receiveShadow = true;
+                        
+                        // Если в модели есть цвета вершин (как в SculptGL)
+                        if (child.geometry && child.geometry.attributes.color) {
+                            child.material = new THREE.MeshStandardMaterial({
+                                vertexColors: true,
+                                roughness: 0.7,
+                                metalness: 0.1
+                            });
+                        } else {
+                            // Если цветов нет, оставляем стандартный серый, но с нормальным материалом
+                            child.material = new THREE.MeshStandardMaterial({
+                                color: 0xcccccc,
+                                roughness: 0.7,
+                                metalness: 0.1
+                            });
+                        }
                     }
                 });
                 // Масштабируем и центрируем модель под размер хитбокса (примерно 1.8м высота)
@@ -371,6 +387,7 @@ html_content = """
                                  child.receiveShadow = true;
                                  if (child.geometry && child.geometry.attributes.color) {
                                      child.material.vertexColors = true;
+                                     child.material.needsUpdate = true;
                                  }
                              }
                          });
@@ -565,8 +582,8 @@ html_content = """
                     if (child.isMesh) {
                         child.castShadow = true;
                         child.receiveShadow = true;
-                        // Не перезаписываем материал новым, используем тот, что в модели
-                        // Но включаем поддержку цветов вершин, если они есть
+                        
+                        // При клонировании убеждаемся, что материал поддерживает цвета вершин
                         if (child.geometry && child.geometry.attributes.color) {
                             child.material.vertexColors = true;
                         }
