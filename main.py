@@ -364,16 +364,18 @@ html_content = """
                         toRemove.forEach(c => p.group.remove(c));
                         
                         // Добавляем модель
-                        const teamColor = p.team === "RED" ? 0xff4757 : 0x1e90ff;
-                        const model = playerModelTemplate.clone();
-                        model.traverse((child) => {
-                            if (child.isMesh) {
-                                child.material = new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.5 });
-                                child.castShadow = true; child.receiveShadow = true;
-                            }
-                        });
-                        model.rotation.y = Math.PI;
-                        p.group.add(model);
+                         const model = playerModelTemplate.clone();
+                         model.traverse((child) => {
+                             if (child.isMesh) {
+                                 child.castShadow = true; 
+                                 child.receiveShadow = true;
+                                 if (child.geometry && child.geometry.attributes.color) {
+                                     child.material.vertexColors = true;
+                                 }
+                             }
+                         });
+                         model.rotation.y = Math.PI;
+                         p.group.add(model);
                     }
                 }
             });
@@ -561,18 +563,19 @@ html_content = """
                 model = playerModelTemplate.clone();
                 model.traverse((child) => {
                     if (child.isMesh) {
-                        child.material = new THREE.MeshStandardMaterial({ 
-                            color: teamColor, 
-                            roughness: 0.5,
-                            metalness: 0.2
-                        });
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        // Не перезаписываем материал новым, используем тот, что в модели
+                        // Но включаем поддержку цветов вершин, если они есть
+                        if (child.geometry && child.geometry.attributes.color) {
+                            child.material.vertexColors = true;
+                        }
                     }
                 });
-                // Поворачиваем модель лицом вперед (обычно OBJ смотрят по оси Z или -Z)
                 model.rotation.y = Math.PI; 
                 group.add(model);
             } else {
-                // Фолбек на коробки, если модель еще не загрузилась
+                // Фолбек на коробки
                 const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 0.5), new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.4 }));
                 body.position.y = 0.9; body.castShadow = true;
                 const legGeo = new THREE.BoxGeometry(0.3, 0.8, 0.3); const legMat = new THREE.MeshStandardMaterial({ color: 0x2f3542, roughness: 0.4 });
