@@ -335,22 +335,6 @@ html_content = """
                     if (child.isMesh) {
                         child.castShadow = true;
                         child.receiveShadow = true;
-                        
-                        // Если в модели есть цвета вершин (как в SculptGL)
-                        if (child.geometry && child.geometry.attributes.color) {
-                            child.material = new THREE.MeshStandardMaterial({
-                                vertexColors: true,
-                                roughness: 0.7,
-                                metalness: 0.1
-                            });
-                        } else {
-                            // Если цветов нет, оставляем стандартный серый, но с нормальным материалом
-                            child.material = new THREE.MeshStandardMaterial({
-                                color: 0xcccccc,
-                                roughness: 0.7,
-                                metalness: 0.1
-                            });
-                        }
                     }
                 });
                 // Масштабируем и центрируем модель под размер хитбокса (примерно 1.8м высота)
@@ -380,19 +364,16 @@ html_content = """
                         toRemove.forEach(c => p.group.remove(c));
                         
                         // Добавляем модель
-                         const model = playerModelTemplate.clone();
-                         model.traverse((child) => {
-                             if (child.isMesh) {
-                                 child.castShadow = true; 
-                                 child.receiveShadow = true;
-                                 if (child.geometry && child.geometry.attributes.color) {
-                                     child.material.vertexColors = true;
-                                     child.material.needsUpdate = true;
-                                 }
-                             }
-                         });
-                         model.rotation.y = Math.PI;
-                         p.group.add(model);
+                        const teamColor = p.team === "RED" ? 0xff4757 : 0x1e90ff;
+                        const model = playerModelTemplate.clone();
+                        model.traverse((child) => {
+                            if (child.isMesh) {
+                                child.material = new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.5 });
+                                child.castShadow = true; child.receiveShadow = true;
+                            }
+                        });
+                        model.rotation.y = Math.PI;
+                        p.group.add(model);
                     }
                 }
             });
@@ -580,19 +561,18 @@ html_content = """
                 model = playerModelTemplate.clone();
                 model.traverse((child) => {
                     if (child.isMesh) {
-                        child.castShadow = true;
-                        child.receiveShadow = true;
-                        
-                        // При клонировании убеждаемся, что материал поддерживает цвета вершин
-                        if (child.geometry && child.geometry.attributes.color) {
-                            child.material.vertexColors = true;
-                        }
+                        child.material = new THREE.MeshStandardMaterial({ 
+                            color: teamColor, 
+                            roughness: 0.5,
+                            metalness: 0.2
+                        });
                     }
                 });
+                // Поворачиваем модель лицом вперед (обычно OBJ смотрят по оси Z или -Z)
                 model.rotation.y = Math.PI; 
                 group.add(model);
             } else {
-                // Фолбек на коробки
+                // Фолбек на коробки, если модель еще не загрузилась
                 const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 0.5), new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.4 }));
                 body.position.y = 0.9; body.castShadow = true;
                 const legGeo = new THREE.BoxGeometry(0.3, 0.8, 0.3); const legMat = new THREE.MeshStandardMaterial({ color: 0x2f3542, roughness: 0.4 });
